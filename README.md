@@ -5,7 +5,7 @@ The beauty Industry was impacted due to COVID19 with the closures of hair salons
 
 <img src="graph/Most common positive and negative words.png" alt="words" width="700"/>
 
-<img src="graph/wordcloud.png" alt="wordcloud" width="700"/>
+<img src="graph/wordcloud.png" alt="wordcloud" width="500"/>
 
 
 https://cran.r-project.org/web/packages/tidytext/vignettes/tidytext.html

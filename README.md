@@ -11,11 +11,6 @@ The beauty Industry was impacted due to COVID19 with the closures of hair salons
 
 <img src="graph/dashboard keyword analysis.png" alt="sentiment plot" width="700"/>
 
-<img src="graph/comparison plot.png" alt="sentiment plot" width="700"/>
-
-<img src="graph/keyword2.png" alt="sentiment plot" width="700"/>
-
-<img src="graph/sentiment plot.png" alt="sentiment plot" width="700"/>
 
 
 

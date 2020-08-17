@@ -13,6 +13,7 @@ The beauty Industry was impacted due to COVID19 with the closures of hair salons
 
 
 
-
-https://cran.r-project.org/web/packages/tidytext/vignettes/tidytext.html
-
+**Feedback**
+1. The regression model could re-scale the COVID cases (e.g. in units of thousands) so that its coefficient would be more easier to interpret.
+2. The approach to using reviews as a proxy for sales is one way of working around unavailable data, this proxy could also be described as a slight limitation, or sensitivity analyses could be used to say what the relationship might look like if the reviews overstate (or understate) the sales. 
+3. Some additional discussion of the applicability of this project to other investments (e.g. other home beauty products or early detection of changing economic circumstances) would be helpful.

@@ -1,0 +1,802 @@
+---
+title: "Dashboard"
+output: 
+  flexdashboard::flex_dashboard:
+    theme: cerulean
+runtime: shiny
+---
+
+
+```{r setup, include=FALSE}
+if(!require(tigris)) install.packages("tigris",repos = "http://cran.us.r-project.org")
+library(rsconnect)
+library(flexdashboard)
+library(shiny)
+library(rmarkdown)
+library(Hmisc)
+library(ggmap)
+library(htmltools)
+library(rgdal)
+library(knitr)
+library(kableExtra)
+library(tidyverse)
+library(ggplot2)
+library(leaflet)
+library(data.table)
+library(dplyr)
+#shapefiles download
+library(tigris)
+states <- states(cb=T)
+library(plotly)
+library(scales)
+#library(gtrendsR)
+library(reshape2)
+library(tidytext) # For unnest_tokens
+library(stringr) # For managing text
+library(tidyr)
+library(tm)
+library(DT)
+library(lubridate)
+library(wordcloud)
+
+```
+
+
+```{r read_data, include=FALSE, eval=TRUE}
+topics.data <- "data_related_topics.csv"
+topics <- fread(input = topics.data)
+
+queries.data <- "data_related_queries.csv"
+queries <- fread(input = queries.data)
+
+region.data <- "data_interest_by_region.csv"
+region <- fread(input = region.data)
+
+time.interest.data <- "data_interest_over_time.csv"
+time.interest <- fread(input = time.interest.data)
+
+state.geocodes <- "us_state_geocodes.csv"
+geocodes <- fread(input = state.geocodes)
+
+reviews.and.covid.cases <- "number_of_reviews_per_day.csv"
+reviews <- fread(input =reviews.and.covid.cases)
+
+amazon.reviews <- fread("amazon reviews.csv"）
+
+
+```
+
+
+```{r datacleaning, include = FALSE, eval = TRUE}
+region.geocodes <- merge(region, geocodes, by = "location")
+
+#clean category
+queries <- select(queries, -6) 
+#rename location to state
+
+sb_state <- region.geocodes %>% rename(state=location)
+
+#head(states)
+
+#joing shapefile and by state
+
+states_merged_sb <- geo_join(states, sb_state, "NAME", "state")
+# Creating a color palette based on the number range in the total column
+pal <- colorNumeric('Blues', domain=states_merged_sb$hits)
+# Getting rid of rows with NA values
+# Using the Base R method of filtering subset() because we're dealing with a SpatialPolygonsDataFrame and not a normal data frame, thus filter() wouldn't work
+states_merged_sb <- subset(states_merged_sb, !is.na(hits))
+
+# Setting up the pop up text
+popup_sb <- paste0("Hits: ", as.character(states_merged_sb$hits))
+
+
+related.queries <- "related.queries"
+
+
+#queries top vs rising
+
+#top.queries <- queries[related_queries == "top",]
+
+
+#rising.queries <- queries[related_queries == "rising",]
+
+
+
+
+#constants
+reviewdata.name <- "reviewdata"
+reviewdate.name <- "reviewdate"
+stars.name <- "stars"
+product.name <- "product"
+querie.name <- "related_queries"
+
+
+unique.products <- amazon.reviews[, sort(unique(get(product.name)))]
+unique.stars <- amazon.reviews[, sort(unique(get(stars.name)))]
+unique.queries <- queries[, sort(unique(related_queries))]
+
+respondent.variables <- c(stars.name, product.name)
+#scaled cases and num of reviews
+#reviews$scaled.cases <- scale(reviews$cases)
+#reviews$scaled.reviews_per_day <- scale(reviews$scaled.reviews_per_day)
+
+
+#data scaling and cleaning wide to long format
+reviews$cases.scaled <- rescale(reviews$cases)
+reviews$reviews_per_day.scaled <- rescale(reviews$reviews_per_day)
+reviews$sentiment.scaled <- rescale(reviews$sentiment) #davamate
+
+#
+
+
+newdata <- reviews[, .(reviewdate, cases.scaled, reviews_per_day.scaled, sentiment.scaled)]
+
+newdata.tidy <- gather(data=newdata, key = reviews.and.cases, value = IndexValue, -reviewdate)
+
+
+
+
+```
+
+
+```{r leaflet, include=FALSE, eval=TRUE}
+map1 <- leaflet() %>%
+  setView(-96, 37.8, 3) %>%
+  addProviderTiles(providers$Esri.WorldStreetMap) %>%
+  addMarkers(lng = region.geocodes$lon, lat = region.geocodes$lat, popup = region.geocodes$location)
+
+
+states_merged_sb$popup_sb <- paste("<p>", states_merged_sb$NAME, "</p>",
+                          "<p>", states_merged_sb$hits, "</p>")
+
+# Mapping it with the new tiles CartoDB.Positron
+map2 <- leaflet() %>%
+  addProviderTiles("CartoDB.Positron") %>%
+  setView(-98.483330, 38.712046, zoom = 4) %>% 
+  addPolygons(data = states_merged_sb , 
+              fillColor = ~pal(states_merged_sb$hits), 
+              fillOpacity = 0.7, 
+              weight = 0.2, 
+              smoothFactor = 0.2, 
+              popup = ~popup_sb) %>%
+  addLegend(pal = pal, 
+            values = states_merged_sb$hits, 
+            position = "bottomright", 
+            title = "Google trends by States")
+#popup = ~popup_sb
+
+library(lubridate)
+time.interest$date <- date(time.interest$date)
+#Basic line plot
+linegraph1 <- ggplot(data = time.interest, aes(x = date, y = hits, group = 1))+
+  geom_line(color = "#1979a9", size = 2) +
+  theme_minimal()+
+  scale_x_date(NULL, date_labels = "%b %y", breaks = "month")+
+  theme(axis.text.x = element_text(angle = 90, vjust = 0.5, hjust=1))
+
+
+#lingraphfor amazon reviews
+reviews$reviewdate <- date(reviews$reviewdate)
+newdata.tidy$reviewdate <- date(newdata.tidy$reviewdate)
+
+#reviews$reviewdate <- format(mdy(reviews$reviewdate), "%m/%d/%Y")
+#reviews$reviewdate <- as.Date(reviews$reviewdate)
+#reviews$reviewdate <- format(as.Date(reviews$reviewdate, "%B %d %Y"), "%m/%d/%Y")
+#Basic line plot
+
+linegraph2 <- ggplot(data = reviews, aes(x = reviewdate, y = reviews_per_day, group = 1))+
+  geom_line(color = "#1979a9", size = 2) +
+  theme_minimal()+
+  scale_x_date(NULL, date_labels = "%b %y", breaks = "month")+
+  theme(axis.text.x = element_text(angle = 90, vjust = 0.5, hjust=1))
+
+
+
+
+
+
+#colors
+#colour <- c('blue','#66929b', '#ffc0cb')
+
+#covid and reviews
+l3 <- ggplot(data = newdata.tidy, aes(x=reviewdate, y = IndexValue, color = reviews.and.cases))+
+  theme_minimal()+
+  geom_line(size = 1.5)+
+  scale_colour_manual(values=c("#ffa500", "#fb4f4f", "#6cc0e5"),
+  labels = c("Covid Cases", "Amazon Reviews", "Sentiment Scores"))+
+   scale_x_date(NULL, date_labels = "%b %y", breaks = "month")+
+  xlab("") + ylab("")+
+  theme(legend.position = "none")+
+  theme(axis.text.x = element_text(angle = 90, vjust = 0.5, hjust=1), legend.title = element_blank())
+
+```
+
+```{r functions5}
+
+#functions
+# If x is numeric, round the values of x to the specified number of digits.
+round.numerics <- function(x, digits){
+  if(is.numeric(x)){
+    x <- round(x = x, digits = digits)
+  }
+  return(x)
+}
+
+## Create a user-friendly table of coefficients from the output of a linear regression model.
+linear.regression.summary <- function(lm.mod, digits = 3){
+  require(data.table)
+  lm.coefs <- as.data.table(summary(lm.mod)$coefficients, keep.rownames = TRUE)
+  alpha = 0.05
+  z <- qnorm(p = 1-alpha/2, mean = 0, sd = 1)
+  lm.coefs[, Coef.Lower.95 := Estimate - z * `Std. Error`]
+  lm.coefs[, Coef.Upper.95 := Estimate + z * `Std. Error`]
+  return(lm.coefs)
+}
+
+## Create a user-friendly table of coefficients from the output of a logistic regression model.
+logistic.regression.summary <- function(glm.mod, digits = 3){
+  require(data.table)
+  glm.coefs <- as.data.table(summary(glm.mod)$coefficients, keep.rownames = TRUE)
+  alpha = 0.05
+  z <- qnorm(p = 1-alpha/2, mean = 0, sd = 1)
+  glm.coefs[, Odds.Ratio := exp(Estimate)]
+  glm.coefs[, OR.Lower.95 := exp(Estimate - z * `Std. Error`)]
+  glm.coefs[, OR.Upper.95 := exp(Estimate + z * `Std. Error`)]
+  return(glm.coefs[])
+}
+
+## Create a user-friendly table of coefficients from the output of a logistic regression model.
+
+# dat:  a data.frame or data.table object
+# the.formula:  a formula specification for the model.
+# model.type:  "logistic" or "linear"
+# digits:  How many digits to round the results to.
+fit.model <- function(dat, the.formula, model.type, digits = 3){
+  require(data.table)
+  
+  if(model.type == "logistic"){
+    mod <- glm(formula = the.formula, family = "binomial", data = dat)
+    mod.summary <- logistic.regression.summary(glm.mod = mod, digits = digits)
+  }
+  if(model.type == "linear"){
+    mod <- lm(formula = the.formula, data = dat)
+    mod.summary <- linear.regression.summary(lm.mod = mod, digits = digits)
+  }
+  mod.summary.rounded <- mod.summary[, lapply(X = .SD, FUN = "round.numerics", digits = digits)]
+  setnames(x = mod.summary.rounded, old = "rn", new = "Variable")
+  mod.summary.rounded[, Variable := gsub(pattern = "`", replacement = "", x = Variable, fixed = TRUE)]
+  return(mod.summary.rounded[])
+}
+
+```
+
+```{r functions}
+percentage.table <- function(x, digits = 1){
+  tab <- table(x)
+  percentage.tab <- 100*tab/(sum(tab))
+  rounded.tab <- round(x = percentage.tab, digits = digits)
+  return(rounded.tab)
+}
+
+subtract <- function(x, y) {
+return(x - y)
+}
+
+round.numerics <- function(x, digits){
+  if(is.numeric(x)){
+    x <- round(x = x, digits = digits)
+  }
+  return(x)
+}
+```
+
+
+
+
+Introduction
+========================================================================
+**Background**
+
+The beauty Industry was impacted due to COVID19 with the closures of hair salons. This change created demand for DIY beauty products. For instance, in the DIY hair coloring category, sales increased 115% when compared to the months before the start of the quarantine. Before COVID, the global market for hair coloring was expected to increase to 40 billion U.S. dollars by 2023. Now the areas of the U.S are starting to re-open; our goal is to determine if the time in quarantine and the risk for COVID have changed the purchasing patterns of consumers. The goal of this assessment is to determine if there is more demand for DIY hair coloring products post-lockdown and to deliver actionable data insights that will guide our client’s investment strategy in the hair coloring segment
+
+**Goal**
+
+Analyze public data to give data insights to investor with the goal of determinizing if the DIY Hair Coloring Demand will continue post-lockdown and provide sentiment analysis that will be used if investor decides to move forward with initiative of investing in this sector.
+
+**Research Questions**
+
+1. Relationship between Covid-19 confirmed cases and online sales of hair coloring products.
+
+2. Compare google trends for hair coloring related keywords before and after March 2020.
+
+3. Analyze reviews of hair dyeing products by sentiment analysis and keywords extraction, to identify temporary changes in demand and provide Marketing Strategy advice.
+
+
+Amazon Reviews
+========================================================================
+
+Column {.sidebar data-width=250}
+------------------------------------------------------------------------------------
+
+### User Input
+
+```{r q18_input}
+inputPanel(
+  #selectInput(inputId="respondent_variable", label = "Select Variable:", choices = #respondent.variables, selected = respondent.variables[1])
+  selectInput(inputId = "em_stars", label = "stars", choices = unique.stars, selected = unique.stars, multiple = TRUE),
+  selectInput(inputId = "em_product", label = "product", choices = unique.products, selected =
+unique.products, multiple = TRUE)
+ # selectInput(inputId = "product", label = "product", choices = unique.products, selected = #unique.products, multiple = TRUE), label = "product", choices = unique.personas, selected = unique.personas, multiple = TRUE),
+#  selectInput(inputId = "product_stars", label = "stars", choices = unique.stars, selected = #unique.stars, multiple = TRUE),
+#  selectInput(inputId = "product", label = "product", choices = unique.products, selected = #unique.products, multiple = TRUE)
+)
+```
+
+
+Column {.data-width = 750}
+-------------------------------------------------------------------------------------
+
+### Amazon Reviews
+
+```{r qa_output}
+renderDataTable({
+  datatable(subdat <- amazon.reviews[get(product.name) %in% input$em_product & get(stars.name) %in% input$em_stars],  rownames = F, options = list(
+  autoWidth = TRUE,
+  #options = list(scrollX = TRUE),
+  extensions = 'Scroller',
+  columnDefs = list(list(width = '200px', targets = c(1, 3)))))
+})
+```
+
+
+COVID-19 & Trend 
+========================================================================
+
+
+Column {data-width=800}
+-----------------------------------------------------------------
+
+
+### Graph
+Line graph - Features rescaled - range in (0, 1)
+
+```{r graph_1}
+
+renderPlot({
+  l3
+})
+```
+
+### Linear Regression
+
+```{r inputregression}
+lin1.mod <- fit.model(dat = reviews, the.formula = "reviews_per_day ~ cases + sentiment", model.type = "linear")
+
+                    
+#lm1 <- lm(reviews_per_day ~ cases + sentiment, data = reviews)
+```
+
+The regression output shows that predictor variables - Covid-19 daily cases and Sentiment scores are statistically significant because their p values are close to zero. It also shows positive correlations between dependent and independent variables.
+
+```{r outputregression1}
+#summary(lm1)
+datatable(data = lin1.mod, rownames = F)
+```
+
+
+
+Column {data-width=200}
+-----------------------------------------------------------------
+
+### Total Reviews
+
+```{r}
+
+num_reviews  <- "Covid-19"
+
+valueBox(num_reviews,
+         caption = "Daily New Covid Cases", color="#ffa500")
+```
+
+### Maximum Reviews
+
+```{r}
+
+num_reviews  <- "Amazon Reviews"
+
+valueBox(num_reviews,
+         caption = "Daily Amazon Reviews", color="#fb4f4f")
+```
+
+### Minimum Reviews
+
+```{r}
+
+num_reviews  <- "Sentiment Scores"
+
+valueBox(num_reviews,
+         caption = "Daily Sentiment Scores", color="#6cc0e5")
+```
+
+
+
+
+Google trends 
+=========================================================================
+
+
+Column {.sidebar data-width=200}
+-----------------------------------------------------------------------
+```{r g_input}
+ selectInput(inputId = "g_queries", label = "Queries", choices = unique.queries, selected = unique.queries, multiple = FALSE)
+```
+
+
+
+
+
+Column {data-width=550}
+-----------------------------------------------------------------------
+
+### **Map - Google trends by State, 100 is the maximum search interest for the time and location selected**
+
+```{r}
+map2
+
+```
+
+
+
+### **Line Graph2 - Google trends over time for hair dye**
+
+```{r plot1}
+renderPlot({
+  linegraph1
+})
+```
+
+
+
+Column {data-width=250}
+-----------------------------------------------------------------------
+### 
+```{r}
+max_hits  <- c("Top and Rising Queries")
+valueBox(value = max_hits)
+
+```
+
+### **Table - Related queries for hair dye**
+
+```{r g_output}
+
+renderDataTable({
+  subdat <- queries[get(querie.name) %in% input$g_queries]
+})
+
+
+```
+
+
+
+
+Sentiment Analysis
+===========================================================================
+
+Please select product names to explore. The graph depicts the top positive and negative keywords of customers' online reviews for the product you selected. You have two options to choose, bar chart and word cloud. 
+
+```{r}
+data <- fread('amazon reviews.csv')
+# product.variables <- c('Garnier Nutrisse - Hair dye', 'Keracolor - Color depositing conditioner', 'Loreal Paris Excellence', 'Revlon Colorsilk - Permanent Hair dye')
+
+product.name <- "product"
+unique.product <- data[, sort(unique(get(product.name)))]
+graph.choices <- c('Word cloud', 'Bar chart')
+
+```
+
+```{r}
+custom_stop_words <- tribble(
+  # Column names should match stop_words
+  ~word,  ~lexicon,
+  # Add http, win, and t.co as custom stop words
+  "like", "CUSTOM",
+  "great",  "CUSTOM",
+  "love", "CUSTOM",
+  "good", "CUSTOM",
+  "well", "CUSTOM",
+  "bad", "CUSTOM",
+  "top", "CUSTOM",
+  "recommended",  "CUSTOM",
+  "worth",  "CUSTOM",
+   "hot",  "CUSTOM",
+  "nice", "CUSTOM",
+  "recommend",  "CUSTOM",
+  "super",  "CUSTOM",
+   "perfect",  "CUSTOM",
+  "pretty",  "CUSTOM",
+  "beautiful", "CUSTOM",
+  "happy", "CUSTOM",
+  "amazing", "CUSTOM",
+  "favoriate", "CUSTOM",
+  "loved", "CUSTOM",
+  "fine",  "CUSTOM",
+  "perfectly",  "CUSTOM",
+  "excellent",  "CUSTOM",
+  "disappointed",  "CUSTOM",
+  "best", "CUSTOM"
+)
+
+# Bind the custom stop words to stop_words
+stop_words2 <- stop_words %>% 
+  bind_rows(custom_stop_words)
+```
+
+
+
+
+```{r}
+inputPanel(
+  selectInput(inputId="product_variable1", label = "Select Product 1:", choices = unique.product, selected = unique.product[1]),
+  selectInput(inputId="product_variable2", label = "Select Product 2:", choices = unique.product, selected = unique.product[2]),
+  selectInput(inputId="graph_choice", label = "Select Graph:", choices = graph.choices, selected = graph.choices[2])
+)
+# input <- list(product_variable1 = unique.product[1],product_variable2 = unique.product[2], graph_choice = graph.choices[1])
+
+```
+
+
+Column {data-width=800}
+-------------------------------------
+
+### Product 1 - Top keywords by Sentiment 
+```{r product1graph}
+renderPlot({
+
+  #-------prepare data ---------------------
+# data for wordcloud 
+  tidy_data1 <- data[product==input$product_variable1,] %>%
+  unnest_tokens(output = 'word', token = 'words', input = reviewdata)%>%
+  anti_join(stop_words2)
+
+
+  # sentiment - bing 
+bing <- get_sentiments("bing")
+bing_word_counts1 <- tidy_data1 %>%
+  inner_join(bing) %>%
+  count(word, sentiment, sort = TRUE)
+
+#-------fit model---------------------
+
+if(input$graph_choice == 'Word cloud'){
+tidy_data1 %>%
+  inner_join(bing) %>%
+  count(word, sentiment, sort = TRUE) %>%
+  acast(word ~ sentiment, value.var = "n", fill = 0) %>%
+  comparison.cloud(colors = c('grey', 'orange'),
+                 title.size=2.5, max.words=100)
+  
+  }
+  
+  else{
+bing_word_counts1 %>%
+  filter(n>max(n)*0.07) %>%
+  mutate(n = ifelse(sentiment == "negative", -n, n)) %>%
+  mutate(word = reorder(word, n)) %>%
+  ggplot(aes(word, n, fill = sentiment)) +
+  geom_col() +
+  scale_fill_manual("legend", values = c("positive" = "orange", "negative" = "grey"))+
+  coord_flip() +
+  labs(y = "Contribution to sentiment")
+  }
+
+
+})
+
+
+```
+
+
+Column {data-width=800}
+-----------------------------------------------------------------------
+### Product 2 - Top keywords by Sentiment 
+```{r product2graph}
+renderPlot({
+
+#-------prepare data ---------------------
+# data for wordcloud 
+  tidy_data2 <- data[product==input$product_variable2,] %>%
+  unnest_tokens(output = 'word', token = 'words', input = reviewdata)%>%
+  anti_join(stop_words2)
+
+# sentiment - bing 
+bing <- get_sentiments("bing")
+bing_word_counts2 <- tidy_data2 %>%
+  inner_join(bing) %>%
+  count(word, sentiment, sort = TRUE)
+
+
+#-------fit model---------------------
+  if(input$graph_choice == 'Word cloud'){
+tidy_data2 %>%
+  inner_join(bing) %>%
+  count(word, sentiment, sort = TRUE) %>%
+  acast(word ~ sentiment, value.var = "n", fill = 0) %>%
+  comparison.cloud(colors = c('grey', 'orange'),title.size=2.5,
+                   max.words = 100)
+    
+  }
+  
+  else{
+bing_word_counts2 %>%
+  filter(n > max(n)*0.07) %>%
+  mutate(n = ifelse(sentiment == "negative", -n, n)) %>%
+  mutate(word = reorder(word, n)) %>%
+  ggplot(aes(word, n, fill = sentiment)) +
+  geom_col() +
+ scale_fill_manual("legend", values = c("positive" = "orange", "negative" = "grey"))+
+  coord_flip() +
+  labs(y = "Contribution to sentiment")
+  }
+    
+})
+
+```
+
+
+
+Keyword Analysis
+================================================================================
+
+```{r}
+inputPanel(
+    selectInput(inputId="product_variable", label = "Select Product:", choices = unique.product, selected = unique.product[1]),
+  sliderInput(inputId = "num_words", label = "Select Number of Words Display:", min = 30, max = 200, value = 50, step = 10),
+    checkboxInput(inputId = "before_march", label = "Keywords After March", value = TRUE)
+)
+# input <- list(product_variable = unique.product[1],num_words=30, before_march=TRUE)
+
+```
+
+Column {data-width=700}
+-----------------------------------------------------------------------
+### Word cloud- for selected products
+```{r}
+renderPlot({
+  # devide reviews before and after March 
+  data1 <- data[product==input$product_variable,] 
+  data1$reviewdate1<-as.Date(as.character(data1$reviewdate), format = "%m/%d/%Y")
+#data.1half.year
+data.1half.year<-filter(data1, reviewdate1 >= "2019-10-01", reviewdate1 <= "2020-02-29")
+#data.2half.year
+data.2half.year<-filter(data1, reviewdate1 >= "2020-03-01", reviewdate1 <= "2020-08-03")
+# stop words for keywords analysis 
+  customize_stopwords<-tribble(
+  ~word,~lexicon,
+  "hair", "CUSTOM",
+  "colors", "CUSTOM",
+  "dye", "CUSTOM",
+  "product","CUSTOM",
+  "2","CUSTOM",
+  "3","CUSTOM",
+  "ve","CUSTOM",
+   "hair","CUSTOM",
+  "color","CUSTOM",
+  "dyed","CUSTOM",
+  "buy","CUSTOM",
+  "bought","CUSTOM",
+  "nice","CUSTOM",
+  "didn","CUSTOM",
+  "stuff","CUSTOM",
+  "love","CUSTOM"
+)
+stop_words4 <- stop_words %>% 
+  bind_rows(customize_stopwords)
+
+      if(input$before_march == TRUE){
+  tidy_data <- data.1half.year[data.1half.year$product==input$product_variable,] %>%
+  unnest_tokens(word, reviewdata)%>%
+  anti_join(stop_words4)
+  
+  tidy_data %>%
+  count(word) %>%
+  with(wordcloud(word, n, max.words = input$num_words,  colors = c("orange")))
+     }
+    else{
+  tidy_data <- data.2half.year[data.2half.year$product==input$product_variable,] %>%
+  unnest_tokens(word, reviewdata)%>%
+  anti_join(stop_words4)
+  tidy_data %>%
+  count(word) %>%
+  with(wordcloud(word, n, max.words = input$num_words,  colors = c("orange")))
+  }
+  
+})
+
+```
+
+Column {data-width=700}
+-----------------------------------------------------------------------
+### Bar chart - top keywords for selected products
+
+```{r}
+renderPlot({
+  # devide reviews before and after March 
+  data1 <- data[product==input$product_variable,] 
+  data1$reviewdate1<-as.Date(as.character(data1$reviewdate), format = "%m/%d/%Y")
+#data.1half.year
+data.1half.year<-filter(data1, reviewdate1 >= "2019-10-01", reviewdate1 <= "2020-02-29")
+#data.2half.year
+data.2half.year<-filter(data1, reviewdate1 >= "2020-03-01", reviewdate1 <= "2020-08-03")
+# stop words for keywords analysis 
+  customize_stopwords<-tribble(
+  ~word,~lexicon,
+  "hair", "CUSTOM",
+  "colors", "CUSTOM",
+  "dye", "CUSTOM",
+  "product","CUSTOM",
+  "2","CUSTOM",
+  "3","CUSTOM",
+  "ve","CUSTOM",
+   "hair","CUSTOM",
+  "color","CUSTOM",
+  "dyed","CUSTOM",
+  "buy","CUSTOM",
+  "bought","CUSTOM",
+  "nice","CUSTOM",
+  "didn","CUSTOM",
+  "stuff","CUSTOM",
+  "love","CUSTOM"
+)
+stop_words4 <- stop_words %>% 
+  bind_rows(customize_stopwords)
+
+
+     if(input$before_march == TRUE){
+  # Top keywords  BEFORE March
+  text.1<-data.1half.year$reviewdata
+
+  data_frame(text = text.1)%>%
+  unnest_tokens(input = text, output = word)%>%
+  select(word)%>%
+  anti_join(stop_words4)%>%
+  group_by(word)%>%
+  summarize(count = n())%>%
+  ungroup()%>%
+  arrange(desc(count))%>%
+  top_n(50)%>%
+  ggplot(aes(x=reorder(word,count), y=count, fill=count))+
+    geom_col()+ scale_fill_gradient(low = "grey", high = "orange", na.value = NA)+
+    xlab('words')+
+    coord_flip()
+     }
+  
+    else{
+# Top keywords AFTER March
+text.2<-data.2half.year$reviewdata
+
+data_frame(text = text.2)%>%
+  unnest_tokens(input = text, output = word)%>%
+  select(word)%>%
+  anti_join(stop_words4)%>%
+  group_by(word)%>%
+  summarize(count = n())%>%
+  ungroup()%>%
+  arrange(desc(count))%>%
+  top_n(50)%>%
+  ggplot(aes(x=reorder(word,count), y=count, fill=count))+
+    geom_col()+ scale_fill_gradient(low = "grey", high = "orange", na.value = NA)+
+    xlab('words')+
+    coord_flip()
+
+  }
+})
+
+```
+
+
+
+
+
+
